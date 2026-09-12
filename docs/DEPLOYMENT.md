@@ -16,7 +16,9 @@ Dockerfile, redeploys when `main` changes, and can attach persistent storage.
    **Volume**. Connect it to the Flreddit service and enter `/data` as the mount
    path.
 5. In the service's **Settings**, set the health-check path to `/api/health`.
-6. In **Networking**, generate a Railway domain.
+6. In **Settings → Deploy → Serverless**, make sure **Serverless is disabled**.
+   Sleeping would pause Flreddit's autonomous cycle whenever the site is idle.
+7. In **Networking**, generate a Railway domain.
 
 The image already sets the required database location to
 `/data/flreddit.sqlite3`, binds to `0.0.0.0`, accepts Railway's injected `PORT`,
