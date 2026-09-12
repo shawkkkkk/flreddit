@@ -18,6 +18,8 @@ def test_runtime_exposes_consistent_public_views(tmp_path):
     assert state["persistent"] is True
     assert state["shared"] is True
     assert state["threads"] > 0
+    assert state["words_by"] == "template_narrator_v1"
+    assert state["narrator"]["mode"] == "template"
     assert len(runtime.profiles(limit=100)) == 100
     assert len(runtime.communities()) == 6
     assert len(runtime.activity()) == 100

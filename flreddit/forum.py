@@ -8,12 +8,12 @@ from pathlib import Path
 import numpy as np
 
 from .names import COMMUNITIES, profile_bio, profile_name
-from .narrator import post as narrate_post, reply as narrate_reply
+from .narrator import TEMPLATE_BACKEND, TemplateNarrator
 
 
 STATE_FORMAT = 2
 DECISION_BACKEND = "social_state_kernel_v1"
-NARRATOR_BACKEND = "template_narrator_v1"
+NARRATOR_BACKEND = TEMPLATE_BACKEND
 MAX_RECENT_EVENTS = 5000
 
 
@@ -74,10 +74,11 @@ class Event:
 
 
 class Forum:
-    def __init__(self, seed: int = 100):
+    def __init__(self, seed: int = 100, narrator=None):
         self.seed = seed
         self.cycle = 0
         self.rng = np.random.default_rng(seed)
+        self.narrator = narrator or TemplateNarrator()
         self.profiles: dict[str, Profile] = {}
         for i in range(100):
             handle, display = profile_name(i)
@@ -95,6 +96,70 @@ class Forum:
         self.next_comment_id = 1
         self.evaluations = 0
         self.action_counts = {action: 0 for action in ("post", "reply", "upvote", "join", "quiet")}
+
+    def _narration_profile(self, profile: Profile) -> dict:
+        axes = (
+            "novelty-seeking", "social", "skeptical", "methodical",
+            "restless", "patient", "playful", "literal",
+            "collective", "solitary", "bold", "cautious",
+        )
+        strongest = np.argsort(np.abs(profile.state))[-3:][::-1]
+        voice = [
+            f"{axes[int(index)]}:{'high' if profile.state[index] >= 0 else 'low'}"
+            for index in strongest
+        ]
+        return {
+            "handle": profile.handle,
+            "display_name": profile.display_name,
+            "bio": profile.bio,
+            "favorite_community": COMMUNITIES[int(np.argmax(profile.preferences))],
+            "subscriptions": sorted(profile.subscriptions),
+            "karma": profile.karma,
+            "previous_mood": profile.mood,
+            "voice_signals": voice,
+        }
+
+    def _recent_writing(self, handle: str, limit: int = 5) -> list[str]:
+        writing: list[str] = []
+        for thread in reversed(self.threads):
+            for comment in reversed(thread.comments):
+                if comment["author"] == handle:
+                    writing.append(comment["text"])
+                    if len(writing) >= limit:
+                        return writing
+            if thread.author == handle:
+                writing.append(f"{thread.title} — {thread.body}")
+                if len(writing) >= limit:
+                    return writing
+        return writing
+
+    def _recent_forum(self, limit: int = 6) -> list[dict]:
+        return [
+            {
+                "community": thread.community,
+                "author": thread.author,
+                "title": thread.title,
+                "body": thread.body,
+                "score": thread.score,
+                "reply_count": len(thread.comments),
+            }
+            for thread in self.threads[-limit:]
+        ]
+
+    @staticmethod
+    def _thread_context(thread: Thread) -> dict:
+        return {
+            "id": thread.id,
+            "community": thread.community,
+            "author": thread.author,
+            "title": thread.title,
+            "body": thread.body,
+            "score": thread.score,
+            "recent_replies": [
+                {"author": comment["author"], "text": comment["text"]}
+                for comment in thread.comments[-8:]
+            ],
+        }
 
     def _context(self) -> np.ndarray:
         counts = np.ones(len(COMMUNITIES), np.float32)
@@ -140,6 +205,7 @@ class Forum:
 
     def step(self) -> list[Event]:
         self.cycle += 1
+        self.narrator.begin_cycle(self.cycle)
         context = self._context()
         new: list[Event] = []
         for profile in self.profiles.values():
@@ -149,13 +215,23 @@ class Forum:
             event = Event(self.cycle, profile.handle, action)
             candidates = [t for t in self.threads[-60:] if t.author != profile.handle]
             if action == "post":
-                title, body = narrate_post(community, int(local.integers(1000)))
-                thread = Thread(self.next_thread_id, profile.handle, community, title, body, self.cycle)
+                copy = self.narrator.post(
+                    community=community,
+                    variant=int(local.integers(1000)),
+                    profile=self._narration_profile(profile),
+                    recent_writing=self._recent_writing(profile.handle),
+                    recent_forum=self._recent_forum(),
+                    cycle=self.cycle,
+                )
+                thread = Thread(
+                    self.next_thread_id, profile.handle, community,
+                    copy.title, copy.body, self.cycle, words_by=copy.words_by,
+                )
                 self.next_thread_id += 1
                 self.threads.append(thread)
                 profile.posts += 1
                 event.thread_id = thread.id
-                event.words_by = NARRATOR_BACKEND
+                event.words_by = copy.words_by
             elif action == "reply" and candidates:
                 reply_candidates = [t for t in candidates if t.id not in profile.commented_threads]
                 if not reply_candidates:
@@ -163,18 +239,24 @@ class Forum:
                     reply_candidates = []
                 if reply_candidates:
                     thread = reply_candidates[int(local.integers(len(reply_candidates)))]
-                    text = narrate_reply(int(local.integers(1000)), thread.author)
+                    copy = self.narrator.reply(
+                        variant=int(local.integers(1000)),
+                        profile=self._narration_profile(profile),
+                        thread=self._thread_context(thread),
+                        recent_writing=self._recent_writing(profile.handle),
+                        cycle=self.cycle,
+                    )
                     comment_id = self.next_comment_id
                     self.next_comment_id += 1
                     thread.comments.append({
-                        "id": comment_id, "author": profile.handle, "text": text,
+                        "id": comment_id, "author": profile.handle, "text": copy.text,
                         "cycle": self.cycle, "target": thread.author,
-                        "decision_by": DECISION_BACKEND, "words_by": NARRATOR_BACKEND,
+                        "decision_by": DECISION_BACKEND, "words_by": copy.words_by,
                     })
                     profile.comments += 1
                     profile.commented_threads.add(thread.id)
                     event.thread_id, event.comment_id, event.target = thread.id, comment_id, thread.author
-                    event.words_by = NARRATOR_BACKEND
+                    event.words_by = copy.words_by
             elif action == "upvote" and candidates:
                 vote_candidates = [t for t in candidates if t.id not in profile.voted_threads]
                 if vote_candidates:
@@ -237,15 +319,15 @@ class Forum:
         os.replace(temporary, target)
 
     @classmethod
-    def load(cls, path: str | Path) -> "Forum":
+    def load(cls, path: str | Path, narrator=None) -> "Forum":
         raw = json.loads(Path(path).read_text())
-        return cls.from_snapshot(raw)
+        return cls.from_snapshot(raw, narrator=narrator)
 
     @classmethod
-    def from_snapshot(cls, raw: dict) -> "Forum":
+    def from_snapshot(cls, raw: dict, narrator=None) -> "Forum":
         if raw.get("format") not in {1, STATE_FORMAT} or len(raw.get("profiles", [])) != 100:
             raise ValueError("Unsupported or incomplete Flreddit state.")
-        forum = cls(seed=int(raw["seed"]))
+        forum = cls(seed=int(raw["seed"]), narrator=narrator)
         forum.cycle = int(raw["cycle"])
         public = {p["handle"]: p for p in raw["profiles"]}
         for handle, profile in forum.profiles.items():

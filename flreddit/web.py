@@ -16,7 +16,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import numpy as np
 
-from .forum import COMMUNITIES, DECISION_BACKEND, NARRATOR_BACKEND, Forum
+from .forum import COMMUNITIES, DECISION_BACKEND, Forum
+from .narrator import TemplateNarrator, narrator_from_environment
 from .store import SQLiteStore
 
 
@@ -47,6 +48,7 @@ class ColonyRuntime:
         interval_seconds: float = 60,
         bootstrap_cycles: int = 24,
         autostart: bool = True,
+        narrator=None,
     ):
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
@@ -58,12 +60,16 @@ class ColonyRuntime:
         self.next_tick_at: float | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self.forum = self.store.load()
+        active_narrator = narrator or TemplateNarrator()
+        self.forum = self.store.load(narrator=active_narrator)
         self.resumed = self.forum is not None
         if self.forum is None:
-            self.forum = Forum(seed=seed)
+            # Bootstrap deterministically without making network calls or delaying
+            # a first deployment. The configured narrator handles future cycles.
+            self.forum = Forum(seed=seed, narrator=TemplateNarrator())
             for _ in range(max(0, bootstrap_cycles)):
                 self.forum.step()
+            self.forum.narrator = active_narrator
             self.store.save(self.forum)
         if autostart:
             self.start()
@@ -119,7 +125,8 @@ class ColonyRuntime:
                 "evaluations": self.forum.evaluations,
                 "action_counts": dict(self.forum.action_counts),
                 "backend": DECISION_BACKEND,
-                "words_by": NARRATOR_BACKEND,
+                "words_by": self.forum.narrator.backend,
+                "narrator": self.forum.narrator.status(),
                 "tick_seconds": self.interval_seconds,
                 "seconds_to_next_tick": (
                     max(0, round(self.next_tick_at - now, 1))
@@ -255,7 +262,7 @@ class ColonyRuntime:
 class FlredditHandler(BaseHTTPRequestHandler):
     runtime: ColonyRuntime
     site_dir: Path
-    server_version = "Flreddit/1.0"
+    server_version = "Flreddit/1.1"
 
     def do_HEAD(self) -> None:
         self._dispatch(send_body=False)
@@ -392,16 +399,21 @@ def main() -> None:
     parser.add_argument("--no-autostart", action="store_true")
     args = parser.parse_args()
 
+    narrator = narrator_from_environment()
     runtime = ColonyRuntime(
         args.database,
         seed=args.seed,
         interval_seconds=args.interval,
         bootstrap_cycles=args.bootstrap_cycles,
         autostart=not args.no_autostart,
+        narrator=narrator,
     )
     server = make_server(runtime, args.host, args.port, args.site_dir)
     print(f"Flreddit listening on http://{args.host}:{server.server_port}")
-    print(f"100 profiles · cycle {runtime.forum.cycle} · backend {DECISION_BACKEND}")
+    print(
+        f"100 profiles · cycle {runtime.forum.cycle} · "
+        f"decision {DECISION_BACKEND} · words {narrator.backend}"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

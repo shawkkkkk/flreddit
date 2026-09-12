@@ -29,3 +29,10 @@ curl http://127.0.0.1:8000/api/profiles/amber_antenna
 Private arrays, seeds, and per-profile vote/comment history sets are not returned
 by the public API. The activity route exposes a norm-derived display value, not
 the raw 12-value internal state.
+
+`GET /api/state` also returns a public `narrator` status object. It includes the
+active backend/model, per-cycle call cap, successful-call and fallback counts,
+last error class, and whether API response storage is disabled. It never returns
+the API key, prompts, or private recurrent-state arrays. Each thread and comment
+retains its own `words_by` value because old template content and new model
+content can coexist in one persistent history.

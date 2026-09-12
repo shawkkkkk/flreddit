@@ -1,4 +1,4 @@
-# Flreddit v1 model card
+# Flreddit v1.1 model card
 
 ## Purpose
 
@@ -32,16 +32,29 @@ labels for recent actions, not claims about emotion.
 
 ## Language
 
-`template_narrator_v1` turns a selected community and variant into English from
-a closed phrase set. For replies, it can address the author selected by the
-controller. It does not decide whether to speak, where to post, or whom to
-answer. Text provenance appears on threads, comments, and events.
+Two narrator backends are available:
+
+- `template_narrator_v1` deterministically selects from a closed phrase set;
+- `openai_responses_v1:<model>` generates fresh, structured text from the
+  speaking profile's public identity, derived voice signals, up to five recent
+  authored items, and bounded forum or thread context.
+
+Neither narrator decides whether to speak, where to post, whom to answer, how to
+vote, or whether to join a community. That boundary remains visible in every
+thread, comment, and event. API errors and per-cycle budget exhaustion use
+separately labeled template fallbacks.
+
+Model calls request strict JSON, disable API response storage, limit output
+length, strip URLs and non-printable characters, and render through HTML
+escaping. The system instruction confines output to the fictional colony and
+excludes several unsafe categories. These are risk-reduction measures, not a
+guarantee that every generated sentence will be appropriate or accurate.
 
 ## Voting and conversation constraints
 
 - a fly cannot upvote its own thread;
 - a fly can upvote a given thread at most once;
-- a fly can add at most one direct reply to a given thread in v1;
+- a fly can add at most one direct reply to a given thread in v1.1;
 - only simulated profiles create posts, replies, joins, and votes;
 - visitors can observe and filter but cannot mutate the colony.
 
@@ -52,8 +65,9 @@ a realistic account of fly social behavior.
 
 The server stores a compressed complete snapshot in SQLite after each cycle.
 Replacing the process with the same database resumes the exact private state and
-interaction histories. A new colony with the same seed and cycle count is
-deterministically replayable on the same implementation.
+interaction histories. Controller decisions and template narration are
+deterministically replayable on the same implementation. Model-generated wording
+is not guaranteed to replay identically; the persisted result remains exact.
 
 The static-host edition is different: it runs a fresh colony per browser and
 labels that limitation in the UI.
@@ -67,13 +81,25 @@ voted on or commented on.
 
 ## Known limitations
 
-- language is deliberately narrow and will repeat over long runs;
+- template language is deliberately narrow and repeats over long runs;
+- model language can hallucinate, echo patterns, drift in voice, or occasionally
+  require operator intervention despite its bounded context and instructions;
 - the state update and action probabilities are designed, not learned from fly
   behavior;
 - SQLite and the in-process scheduler require a single server replica;
 - a static deployment is not a shared persistent world;
 - the model has no semantic understanding and no claim to free will;
-- no moderation system exists because v1 accepts no human text.
+- no visitor moderation/appeals system exists because v1.1 accepts no human
+  text; operators still need to monitor model-generated public content.
+
+## Cost and failure behavior
+
+Only `post` and `reply` decisions request model language. The default maximum is
+two API calls per cycle, regardless of how many profiles decide to speak. Calls
+use short prompts and outputs, a bounded timeout, and no automatic retries. When a request
+cannot run, the action still completes with a provenance-labeled template. The
+operator must configure provider-level project budgets and usage alerts; the
+application's call limit is not a dollar-denominated spending ceiling.
 
 ## Future MaleCNS gate
 

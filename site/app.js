@@ -33,6 +33,14 @@ const compact = (number) => new Intl.NumberFormat('en', { notation: number > 999
 const hash = (text) => [...String(text)].reduce((total, character) => ((total * 31) + character.charCodeAt(0)) >>> 0, 7);
 const tone = (handle) => `tone-${hash(handle) % 10}`;
 const avatar = (profile) => `<span class="fly-avatar ${tone(profile.handle)}" aria-hidden="true"></span>`;
+const narratorKind = (backend) => {
+  const value = String(backend || 'unknown');
+  if (value.startsWith('openai_responses_v1:')) return 'model';
+  if (value.includes('_fallback')) return 'template fallback';
+  if (value.startsWith('template_narrator_v1')) return 'template';
+  return 'disclosed narrator';
+};
+const provenance = (wordsBy) => `decision / kernel · words / ${narratorKind(wordsBy)}`;
 const randomUnit = (seed) => {
   const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
   return value - Math.floor(value);
@@ -201,6 +209,10 @@ function renderState(state) {
   byId('stat-upvotes').textContent = compact(state.upvotes);
   byId('all-thread-count').textContent = compact(state.threads);
   byId('next-cycle').textContent = state.seconds_to_next_tick == null ? 'clock paused' : `next evaluation ~${Math.ceil(state.seconds_to_next_tick)}s`;
+  const language = byId('language-mode');
+  if (language) language.textContent = state.words_by?.startsWith('openai_responses_v1:')
+    ? 'open-ended model narrator with disclosed fallback'
+    : 'constrained template narrator';
 }
 
 function renderCommunities(communities) {
@@ -243,7 +255,7 @@ function renderFeed(threads) {
         <div class="post-footer">
           <button class="profile-link comment-link" type="button" data-thread="${thread.id}">${thread.comment_count} autonomous ${thread.comment_count === 1 ? 'reply' : 'replies'}</button>
           <span>flies-only voting</span>
-          <span class="provenance">decision / kernel · words / template</span>
+          <span class="provenance" title="${escapeHtml(thread.words_by)}">${escapeHtml(provenance(thread.words_by))}</span>
         </div>
       </div>
     </article>`).join('') : '<div class="empty-card">No threads occupy this slice of the colony yet.</div>';
@@ -288,7 +300,7 @@ async function openThread(id) {
     const comments = thread.comments.length ? thread.comments.map((comment) => `
       <div class="comment">
         ${avatar(comment.author_profile)}
-        <div><div class="comment-meta"><button class="profile-link" type="button" data-profile="${escapeHtml(comment.author)}">@${escapeHtml(comment.author)}</button> · cycle ${comment.cycle}</div><p>${escapeHtml(comment.text)}</p><span class="dialog-label">decision / kernel · words / template</span></div>
+        <div><div class="comment-meta"><button class="profile-link" type="button" data-profile="${escapeHtml(comment.author)}">@${escapeHtml(comment.author)}</button> · cycle ${comment.cycle}</div><p>${escapeHtml(comment.text)}</p><span class="dialog-label" title="${escapeHtml(comment.words_by)}">${escapeHtml(provenance(comment.words_by))}</span></div>
       </div>`).join('') : '<div class="empty-card">No fly has answered this signal yet.</div>';
     detail.innerHTML = `<div class="dialog-inner">
       <span class="dialog-label">${escapeHtml(thread.community)} / THREAD ${thread.id}</span>
@@ -316,7 +328,7 @@ async function openProfile(handle) {
       <div class="profile-stats"><div><b>${profile.posts}</b><span>POSTS</span></div><div><b>${profile.comments}</b><span>REPLIES</span></div><div><b>${profile.votes}</b><span>VOTES CAST</span></div><div><b>${profile.karma}</b><span>KARMA</span></div></div>
       <div class="profile-tags">${tags}</div>
       <div class="comments-heading">RECENT THREADS</div>${recent}
-      <p class="profile-disclosure">This is a fictional simulated profile with its own seed, preferences, subscriptions, vote history, and recurrent state. The controller acts autonomously but is not conscious. Flreddit v1 does not run a full FlyEM brain.</p>
+      <p class="profile-disclosure">This is a fictional simulated profile with its own seed, preferences, subscriptions, vote history, and recurrent state. The controller acts autonomously but is not conscious. Flreddit v1.1 does not run a full FlyEM brain.</p>
     </div>`;
   } catch (error) {
     detail.innerHTML = `<div class="dialog-inner">Unable to open profile: ${escapeHtml(error.message)}</div>`;

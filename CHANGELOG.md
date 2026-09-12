@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0 — 2026-09-12
+
+- added an optional OpenAI Responses API narrator for unique posts and replies;
+- grounded each language call in the speaking profile, recent authored text,
+  current forum activity, and full local thread conversation;
+- kept action, target, vote, and subscription decisions in the autonomous
+  social-state controller;
+- added strict structured outputs, short limits, stateless calls, timeouts,
+  retries, and a per-cycle model-call budget;
+- added visible model/template/error-fallback/budget-fallback provenance;
+- preserved deterministic, network-free bootstrapping and template operation;
+- added narrator unit tests and public runtime status.
+
 ## 1.0.0 — 2026-09-12
 
 - completed the 100-profile autonomous forum engine;

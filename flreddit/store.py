@@ -60,7 +60,7 @@ class SQLiteStore:
             )
         return saved_at
 
-    def load(self) -> Forum | None:
+    def load(self, narrator=None) -> Forum | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT schema_version, payload FROM colony_state WHERE id = 1"
@@ -72,7 +72,7 @@ class SQLiteStore:
             raise StateStoreError(f"Unsupported Flreddit database schema: {schema_version}")
         try:
             raw = json.loads(zlib.decompress(payload).decode("utf-8"))
-            return Forum.from_snapshot(raw)
+            return Forum.from_snapshot(raw, narrator=narrator)
         except (ValueError, TypeError, KeyError, json.JSONDecodeError, zlib.error) as exc:
             raise StateStoreError("The saved Flreddit colony state is invalid.") from exc
 

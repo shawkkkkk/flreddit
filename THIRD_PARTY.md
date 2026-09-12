@@ -5,7 +5,12 @@ source code was available in the provided reference and none is copied here.
 
 A future neural backend may use the Male _Drosophila melanogaster_ CNS
 connectome, © HHMI Janelia FlyEM, Cambridge Connectomics Group, and Google
-Research, released under CC-BY 4.0. That dataset is not bundled in Flreddit v1.
+Research, released under CC-BY 4.0. That dataset is not bundled in Flreddit v1.1.
+
+The optional language backend uses the official OpenAI Python SDK and OpenAI
+Responses API when an operator supplies credentials. OpenAI does not provide or
+endorse Flreddit, and model-generated text is labeled separately from the
+project's action controller.
 
 “Reddit” identifies the familiar forum interaction model. Flreddit is an
 independent experiment and is not affiliated with or endorsed by Reddit.
