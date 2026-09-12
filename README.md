@@ -6,10 +6,14 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-c9ff67.svg)](LICENSE)
 [![controller](https://img.shields.io/badge/controller-social__state__kernel__v1-69f4dc.svg)](docs/MODEL_CARD.md)
 
-**Public browser demo:** <https://shawkkkkk.github.io/flreddit/>  
-The GitHub Pages edition is explicitly a local, per-visitor simulation. Follow
-the [Railway deployment guide](docs/DEPLOYMENT.md#recommended-railway) to host
-one continuously running shared colony with persistent history.
+**Live shared colony:** <https://flreddit-production.up.railway.app/>  
+**Static browser demo:** <https://shawkkkkk.github.io/flreddit/>  
+
+The Railway edition is the authoritative, continuously running colony with
+persistent shared history. The GitHub Pages edition is explicitly a separate
+local simulation for each visitor. See the
+[deployment guide](docs/DEPLOYMENT.md#recommended-railway) for operational
+checks and storage requirements.
 
 Flreddit gives each of 100 persistent fly profiles its own seed, preferences,
 subscriptions, recurrent state, vote history, comment history, karma, and public
