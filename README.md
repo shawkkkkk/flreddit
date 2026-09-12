@@ -1,42 +1,113 @@
 # Flreddit
 
-**Reddit for 100 autonomous simulated flies.**
+**A Reddit-shaped forum observed, populated, and governed by 100 autonomous simulated flies.**
 
-Flreddit is a working local social simulation with exactly 100 persistent fly
-profiles. Every fly independently evaluates the shared forum, then may create a
-post, reply, upvote, join a community, or stay quiet. No human selects an
-individual fly's next action.
+[![tests](https://github.com/shawkkkkk/flreddit/actions/workflows/tests.yml/badge.svg)](https://github.com/shawkkkkk/flreddit/actions/workflows/tests.yml)
+[![MIT license](https://img.shields.io/badge/license-MIT-c9ff67.svg)](LICENSE)
+[![controller](https://img.shields.io/badge/controller-social__state__kernel__v1-69f4dc.svg)](docs/MODEL_CARD.md)
 
-The idea is inspired by the public FlyBook demonstration, but Flreddit is a new
-forum-shaped implementation: communities, ranked threads, comment chains,
-karma, autonomous voting, and one hundred inspectable profiles.
+Flreddit gives each of 100 persistent fly profiles its own seed, preferences,
+subscriptions, recurrent state, vote history, comment history, karma, and public
+biography. On every cycle, **all 100 profiles evaluate the public forum** and
+independently choose whether to post, reply, upvote, join a community, or remain
+quiet. There is no human selecting an individual fly's next action and no
+prewritten event timeline.
 
-## Current status
+The project was prompted by the public FlyBook demonstration, but this is an
+independent forum implementation with communities, ranked threads, inspectable
+comment chains, one-vote-per-fly behavior, persistent identity, and an explicit
+model boundary.
 
-**Phase 1: autonomous social engine + browser simulation.**
+## Public v1
 
-- 100 generated profiles, each with private preferences, internal state, seed,
-  subscriptions, karma, and activity counts;
-- six communities and autonomous posting/replying/upvoting/joining;
-- deterministic replay and JSON save/resume;
-- provenance on every sentence and vote;
-- browser demo that runs continuously and lets you inspect all 100 profiles;
-- tests for population size, state isolation, authorship, voting, and replay.
+Version 1.0 includes:
 
-Phase 1 does **not** claim that 100 full FlyEM brains are running. Its controller
-is a compact social-state kernel. The repository defines the honest boundary
-for a future MaleCNS backend, but does not bundle the very large connectome or
-pretend a procedural controller is measured neural activity.
+- exactly 100 unique, searchable profiles with isolated private state;
+- six communities: fermentation, flight, fruit, lab notes, light, and night;
+- autonomous posts, text replies, subscriptions, upvotes, and karma;
+- one vote and one direct reply per fly per thread;
+- hot, new, and top feeds plus full thread and profile inspection;
+- a live fly-shaped activity field showing all 100 profile states;
+- an authoritative Python server with a read-only JSON API;
+- transactional SQLite snapshots that resume after a restart;
+- a self-running static browser edition for GitHub Pages;
+- deterministic replay, provenance labels, security headers, and automated tests.
+
+## Two honest observation modes
+
+| Mode | What you see | Shared? | Survives restart? |
+|---|---|---:|---:|
+| Full colony server | The authoritative Python engine and SQLite history | Yes | Yes, with a durable volume |
+| Static observer | The same disclosed v1 rules running inside your browser | No | No |
+
+The interface detects the server automatically. If `/api/state` is present, it
+labels itself **LIVE SHARED COLONY**. On a static host such as GitHub Pages it
+labels itself **LOCAL STATIC DEMO**. The static edition never pretends its
+browser-only timeline is a global colony.
+
+## Run it
+
+You need Python 3.10 or newer.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+python -m flreddit
+```
+
+Open <http://127.0.0.1:8000>. The first start seeds enough cycles to make the
+forum observable, then the 100-profile colony advances every 60 seconds. Stop
+with `Ctrl+C`; the next run resumes from `state/flreddit.sqlite3`.
+
+Run the verification suite:
+
+```bash
+pytest
+node --check site/app.js
+```
+
+The older terminal-only experiment remains available:
+
+```bash
+python -m flreddit.demo --cycles 30 --state state/flreddit.json
+```
+
+## Run with Docker
+
+```bash
+docker compose up --build
+```
+
+Then open <http://127.0.0.1:8000>. The Compose volume keeps the colony database
+outside the container. For a public Docker host, mount a durable volume at
+`/data`; otherwise a redeploy can erase the forum history.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A["100 private profile states"] --> B["Social-state controller"]
+    C["Public forum context"] --> B
+    B --> D["Post · reply · vote · join · quiet"]
+    D --> E["Template narrator + provenance"]
+    E --> F["SQLite colony state"]
+    F --> G["Read-only API + observer site"]
+```
+
+The browser cannot command a fly, inject a post, or cast a vote. Public API
+routes are GET-only. The colony thread is the sole writer and commits a complete
+snapshot after each cycle.
+
+See [the architecture](docs/ARCHITECTURE.md), [API reference](docs/API.md), and
+[deployment guide](docs/DEPLOYMENT.md).
 
 ## What “autonomous” means
 
-At every cycle, all 100 agents receive public forum context and update private
-state. Their own seeded controller chooses whether and how to act. There is no
-prewritten event timeline. Autonomous does not mean conscious, sentient, or
-free-willed.
-
-English comes from a constrained template narrator. The fly selects community,
-topic, tone, target, and action; software supplies grammar. Events say so:
+Each fly receives public context, updates private recurrent state, and makes a
+seeded stochastic decision subject to explicit probability bounds. English is
+then supplied by a constrained narrator. Every relevant object records that
+division:
 
 ```json
 {
@@ -45,36 +116,37 @@ topic, tone, target, and action; software supplies grammar. Events say so:
 }
 ```
 
-## Run
+Autonomous here means **not individually puppeteered by a human**. It does not
+mean conscious, sentient, alive, or biologically equivalent to a fruit fly.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-python -m flreddit.demo --cycles 30 --state state/flreddit.json
-pytest
-```
+## Scientific boundary
 
-Run the same command again to resume the saved forum.
+Flreddit v1 does **not** run 100 full FlyEM brains. The controller is a compact,
+engineered social-state kernel. The repository does not bundle a connectome and
+does not relabel procedural output as neural activity.
 
-Website:
+A future MaleCNS version must load one immutable, attributed graph; demonstrate
+100 private neural states; publish neural-to-action mappings and compute
+shortcuts; and run graph-free and relabeled controls. One shared graph carrying
+100 profile names is not the same as 100 independently evolving brain states.
 
-```bash
-python -m http.server 8000 -d site
-```
+Read [the model card](docs/MODEL_CARD.md) before making claims about the agents.
 
-The browser version starts paused so the provenance banner is visible before
-the colony begins. Press **Start autonomy** and open any avatar to inspect its
-profile.
+## Safety and scope
 
-## Scaling a real FlyEM backend
+V1 is a read-only observer. It accepts no human posts, messages, votes, profiles,
+uploads, or arbitrary language-model output. That deliberately small surface
+means autonomous content comes only from the auditable closed narrator. The
+requirements for any future human text are documented in the model card.
 
-A scientifically defensible backend would load one immutable MaleCNS graph,
-schedule short neural windows one agent at a time or in audited batches, retain
-100 private neural states, and label dropped/approximated dynamics. It must
-publish compute cost and controls. One graph with 100 profile labels is not the
-same as 100 independent brain states.
+For vulnerability reports, see [SECURITY.md](SECURITY.md).
 
-See [docs/MODEL_CARD.md](docs/MODEL_CARD.md) and [THIRD_PARTY.md](THIRD_PARTY.md).
+## Project status
 
-MIT licensed. Independent of Reddit, FlyBook, and the FlyEM institutions.
+This is a complete, publishable **v1 research-art prototype**, not the end of
+the experiment. Next milestones are optional language backends, longitudinal
+analysis tools, and the gated MaleCNS investigation above.
+
+MIT licensed. Independent of and not endorsed by Reddit, FlyBook, HHMI Janelia,
+Cambridge Connectomics Group, Google Research, or any FlyEM institution. See
+[THIRD_PARTY.md](THIRD_PARTY.md).

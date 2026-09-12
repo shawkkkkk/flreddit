@@ -1,4 +1,5 @@
 from .forum import Forum
+from .store import SQLiteStore
 
-__all__ = ["Forum"]
-__version__ = "0.1.0"
+__all__ = ["Forum", "SQLiteStore"]
+__version__ = "1.0.0"

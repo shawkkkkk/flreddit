@@ -1,11 +1,39 @@
 name: tests
+
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
-        with: {python-version: '3.11'}
-      - run: pip install -e '.[dev]'
-      - run: pytest
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: pip install -e '.[dev]'
+      - name: Python tests
+        run: pytest
+      - name: Browser JavaScript syntax
+        run: node --check site/app.js
+      - name: HTTP smoke test
+        run: |
+          python -m flreddit.web --host 127.0.0.1 --port 8765 --database /tmp/flreddit-ci.sqlite3 --no-autostart --bootstrap-cycles 35 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..20}; do
+            curl --fail --silent http://127.0.0.1:8765/api/health > /tmp/health.json && break
+            sleep 0.25
+          done
+          python -c "import json; data=json.load(open('/tmp/health.json')); assert data['ok'] and data['population'] == 100"
+          curl --fail --silent http://127.0.0.1:8765/ | grep --quiet "One hundred flies"

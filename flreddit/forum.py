@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
 
-from .names import COMMUNITIES, profile_name
+from .names import COMMUNITIES, profile_bio, profile_name
 from .narrator import post as narrate_post, reply as narrate_reply
+
+
+STATE_FORMAT = 2
+DECISION_BACKEND = "social_state_kernel_v1"
+NARRATOR_BACKEND = "template_narrator_v1"
+MAX_RECENT_EVENTS = 5000
 
 
 @dataclass
@@ -23,12 +30,20 @@ class Profile:
     posts: int = 0
     comments: int = 0
     votes: int = 0
+    bio: str = ""
+    mood: str = "observing"
+    last_active_cycle: int = 0
+    voted_threads: set[int] = field(default_factory=set, repr=False)
+    commented_threads: set[int] = field(default_factory=set, repr=False)
 
     def public(self) -> dict:
         return {
             "handle": self.handle, "display_name": self.display_name, "color": self.color,
             "subscriptions": sorted(self.subscriptions), "karma": self.karma,
             "posts": self.posts, "comments": self.comments, "votes": self.votes,
+            "bio": self.bio, "mood": self.mood,
+            "last_active_cycle": self.last_active_cycle,
+            "favorite_community": COMMUNITIES[int(np.argmax(self.preferences))],
         }
 
 
@@ -42,8 +57,8 @@ class Thread:
     cycle: int
     score: int = 1
     comments: list[dict] = field(default_factory=list)
-    decision_by: str = "social_state_kernel_v1"
-    words_by: str = "template_narrator_v1"
+    decision_by: str = DECISION_BACKEND
+    words_by: str = NARRATOR_BACKEND
 
 
 @dataclass
@@ -52,8 +67,9 @@ class Event:
     actor: str
     action: str
     thread_id: int | None = None
+    comment_id: int | None = None
     target: str | None = None
-    decision_by: str = "social_state_kernel_v1"
+    decision_by: str = DECISION_BACKEND
     words_by: str | None = None
 
 
@@ -69,9 +85,16 @@ class Forum:
             preferences = local.dirichlet(np.ones(len(COMMUNITIES))).astype(np.float32)
             color = f"hsl({int((i * 137.508) % 360)} 62% 68%)"
             subscriptions = {COMMUNITIES[int(np.argmax(preferences))]}
-            self.profiles[handle] = Profile(handle, display, seed + i * 1009, color, preferences, subscriptions=subscriptions)
+            self.profiles[handle] = Profile(
+                handle, display, seed + i * 1009, color, preferences,
+                subscriptions=subscriptions, bio=profile_bio(i),
+            )
         self.threads: list[Thread] = []
         self.events: list[Event] = []
+        self.next_thread_id = 1
+        self.next_comment_id = 1
+        self.evaluations = 0
+        self.action_counts = {action: 0 for action in ("post", "reply", "upvote", "join", "quiet")}
 
     def _context(self) -> np.ndarray:
         counts = np.ones(len(COMMUNITIES), np.float32)
@@ -96,10 +119,10 @@ class Forum:
         # exploration prevents one channel's raw scale from dominating forever.
         tendency = 1 / (1 + np.exp(-profile.state[:4]))
         probabilities = np.array([
-            .045 + .10 * tendency[0],
-            (.035 + .09 * tendency[1]) if self.threads else 0,
-            (.05 + .12 * tendency[2]) if self.threads else 0,
-            .012 + .025 * tendency[3],
+            .002 + .006 * tendency[0],
+            (.003 + .008 * tendency[1]) if self.threads else 0,
+            (.012 + .025 * tendency[2]) if self.threads else 0,
+            .0007 + .002 * tendency[3],
         ])
         draw = local.random()
         cumulative = np.cumsum(probabilities)
@@ -120,60 +143,107 @@ class Forum:
         context = self._context()
         new: list[Event] = []
         for profile in self.profiles.values():
+            self.evaluations += 1
             action, community = self._update(profile, context)
             local = np.random.default_rng(profile.seed + self.cycle * 31337)
             event = Event(self.cycle, profile.handle, action)
             candidates = [t for t in self.threads[-60:] if t.author != profile.handle]
             if action == "post":
                 title, body = narrate_post(community, int(local.integers(1000)))
-                thread = Thread(len(self.threads) + 1, profile.handle, community, title, body, self.cycle)
+                thread = Thread(self.next_thread_id, profile.handle, community, title, body, self.cycle)
+                self.next_thread_id += 1
                 self.threads.append(thread)
                 profile.posts += 1
                 event.thread_id = thread.id
-                event.words_by = "template_narrator_v1"
+                event.words_by = NARRATOR_BACKEND
             elif action == "reply" and candidates:
-                thread = candidates[int(local.integers(len(candidates)))]
-                text = narrate_reply(int(local.integers(1000)), thread.author)
-                thread.comments.append({
-                    "author": profile.handle, "text": text, "cycle": self.cycle,
-                    "decision_by": "social_state_kernel_v1", "words_by": "template_narrator_v1",
-                })
-                profile.comments += 1
-                event.thread_id, event.target = thread.id, thread.author
-                event.words_by = "template_narrator_v1"
+                reply_candidates = [t for t in candidates if t.id not in profile.commented_threads]
+                if not reply_candidates:
+                    event.action = "quiet"
+                    reply_candidates = []
+                if reply_candidates:
+                    thread = reply_candidates[int(local.integers(len(reply_candidates)))]
+                    text = narrate_reply(int(local.integers(1000)), thread.author)
+                    comment_id = self.next_comment_id
+                    self.next_comment_id += 1
+                    thread.comments.append({
+                        "id": comment_id, "author": profile.handle, "text": text,
+                        "cycle": self.cycle, "target": thread.author,
+                        "decision_by": DECISION_BACKEND, "words_by": NARRATOR_BACKEND,
+                    })
+                    profile.comments += 1
+                    profile.commented_threads.add(thread.id)
+                    event.thread_id, event.comment_id, event.target = thread.id, comment_id, thread.author
+                    event.words_by = NARRATOR_BACKEND
             elif action == "upvote" and candidates:
-                thread = candidates[int(local.integers(len(candidates)))]
-                thread.score += 1
-                self.profiles[thread.author].karma += 1
-                profile.votes += 1
-                event.thread_id, event.target = thread.id, thread.author
+                vote_candidates = [t for t in candidates if t.id not in profile.voted_threads]
+                if vote_candidates:
+                    thread = vote_candidates[int(local.integers(len(vote_candidates)))]
+                    thread.score += 1
+                    self.profiles[thread.author].karma += 1
+                    profile.votes += 1
+                    profile.voted_threads.add(thread.id)
+                    event.thread_id, event.target = thread.id, thread.author
+                else:
+                    event.action = "quiet"
             elif action == "join":
-                profile.subscriptions.add(community)
-                event.target = community
+                unjoined = [name for name in COMMUNITIES if name not in profile.subscriptions]
+                if unjoined:
+                    joined = max(unjoined, key=lambda name: float(profile.preferences[COMMUNITIES.index(name)]))
+                    profile.subscriptions.add(joined)
+                    event.target = joined
+                else:
+                    event.action = "quiet"
             else:
                 event.action = "quiet"
+            profile.mood = {
+                "post": "broadcasting", "reply": "conversing", "upvote": "endorsing",
+                "join": "exploring", "quiet": "observing",
+            }[event.action]
+            if event.action != "quiet":
+                profile.last_active_cycle = self.cycle
+            self.action_counts[event.action] += 1
             new.append(event)
-        self.events.extend(new)
+        self.events.extend(event for event in new if event.action != "quiet")
+        if len(self.events) > MAX_RECENT_EVENTS:
+            self.events = self.events[-MAX_RECENT_EVENTS:]
         return new
 
     def snapshot(self) -> dict:
         return {
-            "format": 1, "backend": "social_state_kernel_v1", "seed": self.seed,
+            "format": STATE_FORMAT, "backend": DECISION_BACKEND, "seed": self.seed,
             "cycle": self.cycle, "profiles": [p.public() for p in self.profiles.values()],
             "preferences": {h: p.preferences.tolist() for h, p in self.profiles.items()},
             "states": {h: p.state.tolist() for h, p in self.profiles.items()},
+            "histories": {
+                h: {
+                    "voted_threads": sorted(p.voted_threads),
+                    "commented_threads": sorted(p.commented_threads),
+                }
+                for h, p in self.profiles.items()
+            },
+            "next_thread_id": self.next_thread_id,
+            "next_comment_id": self.next_comment_id,
+            "evaluations": self.evaluations,
+            "action_counts": self.action_counts,
             "threads": [asdict(t) for t in self.threads], "events": [asdict(e) for e in self.events],
         }
 
     def save(self, path: str | Path) -> None:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(self.snapshot(), indent=2) + "\n")
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        temporary.write_text(json.dumps(self.snapshot(), indent=2) + "\n")
+        os.replace(temporary, target)
 
     @classmethod
     def load(cls, path: str | Path) -> "Forum":
         raw = json.loads(Path(path).read_text())
-        if raw.get("format") != 1 or len(raw.get("profiles", [])) != 100:
+        return cls.from_snapshot(raw)
+
+    @classmethod
+    def from_snapshot(cls, raw: dict) -> "Forum":
+        if raw.get("format") not in {1, STATE_FORMAT} or len(raw.get("profiles", [])) != 100:
             raise ValueError("Unsupported or incomplete Flreddit state.")
         forum = cls(seed=int(raw["seed"]))
         forum.cycle = int(raw["cycle"])
@@ -187,6 +257,40 @@ class Forum:
             profile.posts = int(saved["posts"])
             profile.comments = int(saved["comments"])
             profile.votes = int(saved["votes"])
-        forum.threads = [Thread(**thread) for thread in raw["threads"]]
-        forum.events = [Event(**event) for event in raw["events"]]
+            profile.bio = saved.get("bio", profile.bio)
+            profile.mood = saved.get("mood", "observing")
+            profile.last_active_cycle = int(saved.get("last_active_cycle", 0))
+            history = raw.get("histories", {}).get(handle, {})
+            profile.voted_threads = {int(value) for value in history.get("voted_threads", [])}
+            profile.commented_threads = {int(value) for value in history.get("commented_threads", [])}
+        forum.threads = []
+        inferred_comment_id = 1
+        for thread_data in raw["threads"]:
+            comments = []
+            for comment in thread_data.get("comments", []):
+                normalized = dict(comment)
+                normalized.setdefault("id", inferred_comment_id)
+                normalized.setdefault("target", thread_data["author"])
+                inferred_comment_id = max(inferred_comment_id, int(normalized["id"]) + 1)
+                comments.append(normalized)
+            normalized_thread = dict(thread_data)
+            normalized_thread["comments"] = comments
+            forum.threads.append(Thread(**normalized_thread))
+        forum.events = [Event(**event) for event in raw.get("events", [])]
+        if not raw.get("histories"):
+            for event in forum.events:
+                if event.thread_id is None or event.actor not in forum.profiles:
+                    continue
+                if event.action == "upvote":
+                    forum.profiles[event.actor].voted_threads.add(event.thread_id)
+                elif event.action == "reply":
+                    forum.profiles[event.actor].commented_threads.add(event.thread_id)
+        forum.next_thread_id = int(raw.get("next_thread_id", max((t.id for t in forum.threads), default=0) + 1))
+        forum.next_comment_id = int(raw.get("next_comment_id", inferred_comment_id))
+        forum.evaluations = int(raw.get("evaluations", forum.cycle * 100))
+        if raw.get("action_counts"):
+            forum.action_counts.update({key: int(value) for key, value in raw["action_counts"].items()})
+        else:
+            for event in forum.events:
+                forum.action_counts[event.action] += 1
         return forum

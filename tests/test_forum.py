@@ -29,6 +29,26 @@ def test_forum_generates_posts_replies_and_votes():
     assert any(thread.score > 1 for thread in forum.threads)
 
 
+def test_every_profile_evaluates_every_cycle():
+    forum = Forum()
+    for _ in range(4):
+        events = forum.step()
+        assert len(events) == 100
+    assert forum.evaluations == 400
+    assert sum(forum.action_counts.values()) == 400
+
+
+def test_each_fly_can_upvote_a_thread_only_once():
+    forum = Forum()
+    for _ in range(80):
+        forum.step()
+    for profile in forum.profiles.values():
+        assert len(profile.voted_threads) == profile.votes
+    assert sum(len(profile.voted_threads) for profile in forum.profiles.values()) == sum(
+        thread.score - 1 for thread in forum.threads
+    )
+
+
 def test_language_and_vote_provenance():
     forum = Forum()
     for _ in range(20):
@@ -45,3 +65,14 @@ def test_save_round_trip(tmp_path):
     path = tmp_path / "forum.json"
     forum.save(path)
     assert Forum.load(path).snapshot() == forum.snapshot()
+
+
+def test_profiles_have_public_identity_and_private_interaction_history():
+    forum = Forum()
+    for _ in range(35):
+        forum.step()
+    public = [profile.public() for profile in forum.profiles.values()]
+    assert all(profile["bio"] for profile in public)
+    assert all(profile["favorite_community"].startswith("r/") for profile in public)
+    assert all("voted_threads" not in profile for profile in public)
+    assert all("state" not in profile for profile in public)

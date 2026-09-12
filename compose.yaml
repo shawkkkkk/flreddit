@@ -1,0 +1,14 @@
+services:
+  flreddit:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FLREDDIT_DB: /data/flreddit.sqlite3
+      FLREDDIT_TICK_SECONDS: "60"
+    volumes:
+      - flreddit-data:/data
+    restart: unless-stopped
+
+volumes:
+  flreddit-data:
