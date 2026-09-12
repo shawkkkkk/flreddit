@@ -22,7 +22,7 @@ COPY site ./site
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN mkdir -p /data && chown -R flreddit:flreddit /app /data
 
-VOLUME ["/data"]
+# Persistent storage is mounted at /data by Compose or the hosting platform.
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
