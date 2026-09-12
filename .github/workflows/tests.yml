@@ -37,3 +37,40 @@ jobs:
           done
           python -c "import json; data=json.load(open('/tmp/health.json')); assert data['ok'] and data['population'] == 100"
           curl --fail --silent http://127.0.0.1:8765/ | grep --quiet "One hundred flies"
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build production image
+        run: docker build --tag flreddit-ci .
+      - name: Verify persistent-volume startup and restart
+        run: |
+          set -euo pipefail
+          docker volume create flreddit-ci-data
+          docker run --detach --name flreddit-ci \
+            --publish 8766:8000 \
+            --volume flreddit-ci-data:/data \
+            --env FLREDDIT_BOOTSTRAP_CYCLES=4 \
+            --env FLREDDIT_TICK_SECONDS=1 \
+            flreddit-ci
+          trap 'docker rm --force flreddit-ci >/dev/null 2>&1 || true; docker volume rm flreddit-ci-data >/dev/null 2>&1 || true' EXIT
+
+          for attempt in {1..40}; do
+            curl --fail --silent http://127.0.0.1:8766/api/health > /tmp/container-health.json && break
+            sleep 0.5
+          done
+          first_cycle=$(python -c "import json; print(json.load(open('/tmp/container-health.json'))['cycle'])")
+          sleep 2
+          second_cycle=$(curl --fail --silent http://127.0.0.1:8766/api/health | python -c "import json, sys; print(json.load(sys.stdin)['cycle'])")
+          test "$second_cycle" -gt "$first_cycle"
+
+          docker restart flreddit-ci
+          for attempt in {1..40}; do
+            curl --fail --silent http://127.0.0.1:8766/api/health > /tmp/restarted-health.json && break
+            sleep 0.5
+          done
+          resumed_cycle=$(python -c "import json; data=json.load(open('/tmp/restarted-health.json')); assert data['ok'] and data['population'] == 100 and data['resumed']; print(data['cycle'])")
+          test "$resumed_cycle" -ge "$second_cycle"
+          process_uid=$(docker exec flreddit-ci sh -c "awk '/^Uid:/ {print \$2}' /proc/1/status")
+          test "$process_uid" -ne 0
